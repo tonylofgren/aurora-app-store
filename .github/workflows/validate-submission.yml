@@ -19,7 +19,7 @@ jobs:
             const repoUrl = read('Repository URL');
             core.setOutput('repo', repoUrl);
 
-      - name: Validate repository
+      - name: Validate repository / topic / release / manifest
         id: validate
         uses: actions/github-script@v7
         with:
@@ -29,16 +29,21 @@ jobs:
             if(!m){ core.setFailed('Invalid repo URL'); return; }
             const owner = m[1], repo = m[2];
 
+            // repo
             const { data: r } = await github.rest.repos.get({ owner, repo });
+
+            // topics
             const { data: t } = await github.rest.repos.getAllTopics({ owner, repo });
             const hasTopic = (t.names || []).includes('aurora-app');
 
+            // releases (minst en)
             let hasRelease = false;
             try {
               const { data: rel } = await github.rest.repos.listReleases({ owner, repo, per_page: 1 });
               hasRelease = (rel.length > 0);
             } catch(e) { hasRelease = false; }
 
+            // manifest på default branch
             let hasManifest = false;
             try {
               const { data: file } = await github.rest.repos.getContent({
@@ -47,29 +52,75 @@ jobs:
               hasManifest = !!file;
             } catch(e) { hasManifest = false; }
 
-            return { repo: repoUrl, hasTopic, hasRelease, hasManifest };
+            // enkel metadata (visas i kommentaren)
+            let manifest = {};
+            if (hasManifest) {
+              try {
+                const { data: file } = await github.rest.repos.getContent({
+                  owner, repo, path: 'aurora-manifest.json', ref: r.default_branch
+                });
+                const b64 = Array.isArray(file) ? null : file.content;
+                if (b64) {
+                  const txt = Buffer.from(b64, 'base64').toString('utf8');
+                  manifest = JSON.parse(txt);
+                }
+              } catch(e) { /* ignore */ }
+            }
+
+            return {
+              repo: repoUrl,
+              default_branch: r.default_branch,
+              hasTopic, hasRelease, hasManifest,
+              manifest_preview: {
+                id: manifest.id || null,
+                display_name: manifest.display_name || null,
+                channel: manifest.channel || null,
+                category: manifest.category || null,
+                min_aurora_version: manifest.min_aurora_version || null
+              }
+            };
           result-encoding: string
 
-      - name: Comment result
+      - name: Comment result (guide for approval v2)
         if: success()
         uses: actions/github-script@v7
         with:
           script: |
             const res = JSON.parse(process.env.RESULT);
             const ok = res.hasTopic && res.hasRelease && res.hasManifest;
+
+            const preview = res.manifest_preview || {};
             const lines = [
-              'Validation results:',
-              `- topic: ${res.hasTopic?'✅':'❌'}`,
-              `- release: ${res.hasRelease?'✅':'❌'}`,
-              `- aurora-manifest.json: ${res.hasManifest?'✅':'❌'}`
+              '### Validation results',
+              `**Repository:** ${res.repo}`,
+              '',
+              `- Topic \`aurora-app\`: ${res.hasTopic?'✅':'❌'}`,
+              `- At least one Release: ${res.hasRelease?'✅':'❌'}`,
+              `- \`aurora-manifest.json\` on \`${res.default_branch}\`: ${res.hasManifest?'✅':'❌'}`,
+              '',
+              '### Manifest preview',
+              `- id: \`${preview.id ?? '—'}\``,
+              `- display_name: \`${preview.display_name ?? '—'}\``,
+              `- channel: \`${preview.channel ?? '—'}\``,
+              `- category: \`${preview.category ?? '—'}\``,
+              `- min_aurora_version: \`${preview.min_aurora_version ?? '—'}\``,
+              ''
             ];
+
             const tail = ok
-              ? '\nLabel **submission:approved** to add this app.'
-              : '\nLabel **submission:changes-requested** to ask the developer for fixes.';
+              ? [
+                  '✅ **Ready for approval.**',
+                  'Apply the label **`submission:approved`** to auto-create a PR that writes this app into `default-repos.json` (v2 format with `status: "approved"`).'
+                ]
+              : [
+                  '❌ **Changes required.**',
+                  'Apply **`submission:changes-requested`** and ask the developer to fix the failing items above.'
+                ];
+
             await github.rest.issues.createComment({
               ...context.repo,
               issue_number: context.issue.number,
-              body: lines.join('\n') + tail
+              body: lines.concat(tail).join('\n')
             });
         env:
           RESULT: ${{ steps.validate.outputs.result }}
