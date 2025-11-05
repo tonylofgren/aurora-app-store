@@ -1,7 +1,30 @@
 {
-  "version": 1,
-  "repos": [
-    "https://github.com/tonylofgren/aurora-plugin-fpp-falcon-player",
-    "https://github.com/tonylofgren/aurora-plugin-santa-wishlist"
+  "version": 2,
+  "last_updated": "2025-11-05T12:00:00Z",
+  "apps": [
+    {
+      "repository": "https://github.com/tonylofgren/aurora-plugin-fpp-falcon-player",
+      "id": "music_light_show",
+      "display_name": "Falcon FPP Player",
+      "author": "Aurora Community",
+      "category": "entertainment",
+      "channel": "core",
+      "status": "approved",
+      "verified_by": "tonylofgren",
+      "verified_at": "2025-11-05T12:00:00Z",
+      "description": "Integrates Falcon Player (FPP) with Aurora for synchronized light shows."
+    },
+    {
+      "repository": "https://github.com/tonylofgren/aurora-plugin-santa-wishlist",
+      "id": "santa_wishlist",
+      "display_name": "Santa's Wishlist",
+      "author": "Tony Löfgren",
+      "category": "christmas",
+      "channel": "community",
+      "status": "approved",
+      "verified_by": "tonylofgren",
+      "verified_at": "2025-11-05T12:00:00Z",
+      "description": "Collect and synchronize wish lists with the Aurora assistant before the holidays."
+    }
   ]
 }
