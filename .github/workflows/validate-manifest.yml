@@ -1,0 +1,29 @@
+name: Validate aurora-manifest.json
+on:
+  push:
+    paths: [ "aurora-manifest.json" ]
+  pull_request:
+    paths: [ "aurora-manifest.json" ]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install ajv-cli
+        run: npm i -g ajv-cli
+
+      # Rekommenderat: pinna schemat till en specifik commit SHA för stabilhet
+      - name: Download schema
+        run: |
+          SCHEMA_SHA=main   # byt till en specifik commit SHA från aurora-app-store
+          curl -sSL "https://raw.githubusercontent.com/tonylofgren/aurora-app-store/${SCHEMA_SHA}/docs/schema.manifest.json" -o schema.manifest.json
+
+      - name: Validate
+        run: ajv validate -s schema.manifest.json -d aurora-manifest.json --strict=false
