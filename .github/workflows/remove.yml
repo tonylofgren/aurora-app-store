@@ -10,11 +10,13 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      issues: read
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/github-script@v7
+      - name: Parse repo URL from issue
         id: parse
+        uses: actions/github-script@v7
         with:
           script: |
             const body = context.payload.issue.body || "";
@@ -22,28 +24,39 @@ jobs:
             if(!m) core.setFailed('Repo URL not found in issue');
             core.setOutput('repo', m ? m[0] : '');
 
-      - name: Remove from default-repos.json
+      - name: Update default-repos.json (mark as removed)
         run: |
           sudo apt-get update && sudo apt-get install -y jq
-          branch="remove-$(date +%s)"
-          git switch -c "$branch"
-          tmp=$(mktemp)
-          jq --arg r '${{ steps.parse.outputs.repo }}' \
-             ' .repos |= map(select(. != $r)) ' \
-             default-repos.json > "$tmp"
-          mv "$tmp" default-repos.json
-          git add default-repos.json
-          git -c user.name="automation" -c user.email="bot@users.noreply.github.com" commit -m "Remove: ${{ steps.parse.outputs.repo }}"
-          git push -u origin "$branch"
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          REPO='${{ steps.parse.outputs.repo }}'
+
+          if [ ! -f default-repos.json ]; then
+            echo "default-repos.json not found"; exit 1
+          fi
+
+          # Markera som removed (behåll metadata). Alternativ: ta bort helt (se kommenterad rad).
+          jq --arg repo "$REPO" --arg now "$NOW" '
+            .last_updated = $now |
+            .apps = (
+              .apps
+              | map(if .repository == $repo
+                    then .status = "removed" | .removed_at = $now
+                    else .
+                    end)
+            )
+            # HÅRDDÖR: avkommentera nästa rad om du vill ta bort helt
+            # | .apps = (.apps | map(select(.repository != $repo)))
+          ' default-repos.json > default-repos.json.new
+
+          mv default-repos.json.new default-repos.json
 
       - name: Open PR
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.pulls.create({
-              ...context.repo,
-              title: `Remove app from default list`,
-              head: process.env.GITHUB_REF_NAME,
-              base: 'main',
-              body: `Removes ${{ steps.parse.outputs.repo }} from default-repos.json.`
-            })
+        run: |
+          BR="remove-$(date +%s)"
+          git switch -c "$BR"
+          git add default-repos.json
+          git -c user.name="automation" -c user.email="bot@users.noreply.github.com" commit -m "Remove: mark ${{ steps.parse.outputs.repo }} as removed"
+          git push -u origin "$BR"
+          gh pr create --title "Remove app: ${{ steps.parse.outputs.repo }}" --body "Marks app as removed in default-repos.json" --base main
+        env:
+          GH_TOKEN: ${{ github.token }}
