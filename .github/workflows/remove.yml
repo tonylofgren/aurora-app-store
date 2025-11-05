@@ -1,0 +1,49 @@
+name: Remove app
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  remove:
+    if: github.event.label.name == 'submission:remove'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/github-script@v7
+        id: parse
+        with:
+          script: |
+            const body = context.payload.issue.body || "";
+            const m = body.match(/https:\/\/github\.com\/[^\s]+\/[^\s]+/);
+            if(!m) core.setFailed('Repo URL not found in issue');
+            core.setOutput('repo', m ? m[0] : '');
+
+      - name: Remove from default-repos.json
+        run: |
+          sudo apt-get update && sudo apt-get install -y jq
+          branch="remove-$(date +%s)"
+          git switch -c "$branch"
+          tmp=$(mktemp)
+          jq --arg r '${{ steps.parse.outputs.repo }}' \
+             ' .repos |= map(select(. != $r)) ' \
+             default-repos.json > "$tmp"
+          mv "$tmp" default-repos.json
+          git add default-repos.json
+          git -c user.name="automation" -c user.email="bot@users.noreply.github.com" commit -m "Remove: ${{ steps.parse.outputs.repo }}"
+          git push -u origin "$branch"
+
+      - name: Open PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.pulls.create({
+              ...context.repo,
+              title: `Remove app from default list`,
+              head: process.env.GITHUB_REF_NAME,
+              base: 'main',
+              body: `Removes ${{ steps.parse.outputs.repo }} from default-repos.json.`
+            })
