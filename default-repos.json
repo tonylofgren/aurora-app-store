@@ -6,7 +6,7 @@
       "repository": "https://github.com/tonylofgren/aurora-plugin-fpp-falcon-player",
       "id": "music_light_show",
       "display_name": "Falcon FPP Player",
-      "author": "Aurora Community",
+      "author": "Tony Löfgren",
       "category": "entertainment",
       "channel": "core",
       "status": "approved",
