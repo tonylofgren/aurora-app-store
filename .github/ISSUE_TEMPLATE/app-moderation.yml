@@ -1,0 +1,29 @@
+name: App submission or moderation
+description: Submit a new app for approval or request removal
+labels: ["submission:pending"]
+body:
+  - type: input
+    id: repo
+    attributes:
+      label: Repository URL
+      placeholder: https://github.com/owner/repo
+    validations:
+      required: true
+  - type: dropdown
+    id: action
+    attributes:
+      label: Action
+      options:
+        - add
+        - remove
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Requirements for add
+      options:
+        - label: Repo is public
+        - label: Contains aurora-manifest.json in repository root
+        - label: Repo has topic "aurora-app"
+        - label: At least one release tag exists (vX.Y.Z)
