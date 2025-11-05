@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "repos": [
+    "https://github.com/tonylofgren/aurora-plugin-fpp-falcon-player",
+    "https://github.com/tonylofgren/aurora-plugin-santa-wishlist"
+  ]
+}
