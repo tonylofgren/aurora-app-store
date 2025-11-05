@@ -10,11 +10,13 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      issues: read
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/github-script@v7
+      - name: Parse repo URL from issue
         id: parse
+        uses: actions/github-script@v7
         with:
           script: |
             const body = context.payload.issue.body || "";
@@ -22,28 +24,104 @@ jobs:
             if(!m) core.setFailed('Repo URL not found in issue');
             core.setOutput('repo', m ? m[0] : '');
 
-      - name: Add to default-repos.json
+      - name: Derive owner/repo
+        id: or
         run: |
-          sudo apt-get update && sudo apt-get install -y jq
-          branch="approve-$(date +%s)"
-          git switch -c "$branch"
-          tmp=$(mktemp)
-          jq --arg r '${{ steps.parse.outputs.repo }}' \
-             '(.repos += [$r]) | .repos |= unique | .version = (.version // 1)' \
-             default-repos.json > "$tmp"
-          mv "$tmp" default-repos.json
-          git add default-repos.json
-          git -c user.name="automation" -c user.email="bot@users.noreply.github.com" commit -m "Approve: add ${{ steps.parse.outputs.repo }}"
-          git push -u origin "$branch"
+          REPO='${{ steps.parse.outputs.repo }}'
+          OWNER=$(echo "$REPO" | sed -E 's#https://github.com/([^/]+)/([^/]+).*#\1#')
+          NAME=$(echo "$REPO" | sed -E 's#https://github.com/([^/]+)/([^/]+).*#\2#')
+          echo "owner=$OWNER" >> $GITHUB_OUTPUT
+          echo "name=$NAME" >> $GITHUB_OUTPUT
 
-      - name: Open PR
+      - name: Fetch default branch
+        id: def
         uses: actions/github-script@v7
         with:
           script: |
-            await github.rest.pulls.create({
-              ...context.repo,
-              title: `Approve app: add to default list`,
-              head: process.env.GITHUB_REF_NAME,
-              base: 'main',
-              body: `Adds ${{ steps.parse.outputs.repo }} to default-repos.json.`
-            })
+            const o = '${{ steps.or.outputs.owner }}';
+            const r = '${{ steps.or.outputs.name }}';
+            const { data } = await github.rest.repos.get({ owner: o, repo: r });
+            core.setOutput('default_branch', data.default_branch || 'main');
+
+      - name: Fetch aurora-manifest.json
+        id: manifest
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const o = '${{ steps.or.outputs.owner }}';
+            const r = '${{ steps.or.outputs.name }}';
+            const ref = '${{ steps.def.outputs.default_branch }}';
+            try {
+              const { data } = await github.rest.repos.getContent({ owner: o, repo: r, path: 'aurora-manifest.json', ref });
+              const b64 = Array.isArray(data) ? null : data.content;
+              if(!b64) { core.setOutput('json', '{}'); return; }
+              const buf = Buffer.from(b64, 'base64').toString('utf8');
+              core.setOutput('json', buf);
+            } catch(e) {
+              core.setOutput('json', '{}');
+            }
+
+      - name: Prepare metadata
+        id: meta
+        run: |
+          mkdir -p .tmp
+          echo '${{ steps.manifest.outputs.json }}' > .tmp/manifest.json
+          # Plocka ut välkända fält, ignorerar om de saknas
+          jq '{
+                id, display_name, author, category, channel, description,
+                repository, documentation, icon, min_aurora_version
+              } | with_entries(select(.value != null))' \
+             .tmp/manifest.json > .tmp/meta.json
+          cat .tmp/meta.json
+
+      - name: Update default-repos.json (v2 format)
+        run: |
+          sudo apt-get update && sudo apt-get install -y jq
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          REPO='${{ steps.parse.outputs.repo }}'
+          VERIFIER='${{ github.actor }}'
+
+          # Initiera fil om den inte finns
+          if [ ! -f default-repos.json ]; then
+            echo '{ "version": 2, "last_updated": "'$NOW'", "apps": [] }' > default-repos.json
+          fi
+
+          # Säkerställ struktur v2
+          jq --arg now "$NOW" '
+            .version = (.version // 2) |
+            .last_updated = $now |
+            .apps = (.apps // [])
+          ' default-repos.json > default-repos.json.tmp && mv default-repos.json.tmp default-repos.json
+
+          # Skapa objekt för denna app
+          jq -n \
+            --arg repo "$REPO" \
+            --arg vb "$VERIFIER" \
+            --arg now "$NOW" \
+            --slurpfile meta .tmp/meta.json '
+            ({ repository: $repo } + ($meta[0] // {}))
+            + { status: "approved", verified_by: $vb, verified_at: $now }
+          ' > .tmp/app.json
+
+          # Slå in/uppdatera i apps (unik på repository)
+          jq --arg repo "$REPO" --arg now "$NOW" \
+             --slurpfile app .tmp/app.json '
+             .last_updated = $now |
+             .apps = (
+               ( .apps | map(select(.repository != $repo)) )
+               + $app
+             )
+          ' default-repos.json > default-repos.json.new
+
+          mv default-repos.json.new default-repos.json
+
+      - name: Open PR
+        run: |
+          BR="approve-$(date +%s)"
+          git switch -c "$BR"
+          git add default-repos.json
+          git -c user.name="automation" -c user.email="bot@users.noreply.github.com" commit -m "Approve: add/update ${{ steps.parse.outputs.repo }}"
+          git push -u origin "$BR"
+          gh pr create --title "Approve app: ${{ steps.parse.outputs.repo }}" --body "Adds/updates app with status=approved in default-repos.json" --base main
+        env:
+          GH_TOKEN: ${{ github.token }}
